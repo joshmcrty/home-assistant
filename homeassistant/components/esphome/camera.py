@@ -1,6 +1,5 @@
 """Support for ESPHome cameras."""
 import asyncio
-import logging
 from typing import Optional
 
 from aioesphomeapi import CameraInfo, CameraState
@@ -11,8 +10,6 @@ from homeassistant.config_entries import ConfigEntry
 from homeassistant.helpers.typing import HomeAssistantType
 
 from . import EsphomeEntity, platform_async_setup_entry
-
-_LOGGER = logging.getLogger(__name__)
 
 
 async def async_setup_entry(
@@ -47,9 +44,9 @@ class EsphomeCamera(Camera, EsphomeEntity):
     def _state(self) -> Optional[CameraState]:
         return super()._state
 
-    async def _on_update(self) -> None:
+    async def _on_state_update(self) -> None:
         """Notify listeners of new image when update arrives."""
-        await super()._on_update()
+        await super()._on_state_update()
         async with self._image_cond:
             self._image_cond.notify_all()
 

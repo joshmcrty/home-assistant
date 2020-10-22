@@ -1,21 +1,23 @@
-"""Provides device automations for NEW_NAME."""
-from typing import List
+"""Provide the device automations for NEW_NAME."""
+from typing import Dict, List
+
 import voluptuous as vol
 
 from homeassistant.const import (
     ATTR_ENTITY_ID,
     CONF_CONDITION,
-    CONF_DOMAIN,
-    CONF_TYPE,
     CONF_DEVICE_ID,
+    CONF_DOMAIN,
     CONF_ENTITY_ID,
+    CONF_TYPE,
     STATE_OFF,
     STATE_ON,
 )
-from homeassistant.core import HomeAssistant
+from homeassistant.core import HomeAssistant, callback
 from homeassistant.helpers import condition, config_validation as cv, entity_registry
-from homeassistant.helpers.typing import ConfigType, TemplateVarsType
 from homeassistant.helpers.config_validation import DEVICE_CONDITION_BASE_SCHEMA
+from homeassistant.helpers.typing import ConfigType, TemplateVarsType
+
 from . import DOMAIN
 
 # TODO specify your supported condition types.
@@ -29,7 +31,9 @@ CONDITION_SCHEMA = DEVICE_CONDITION_BASE_SCHEMA.extend(
 )
 
 
-async def async_get_conditions(hass: HomeAssistant, device_id: str) -> List[str]:
+async def async_get_conditions(
+    hass: HomeAssistant, device_id: str
+) -> List[Dict[str, str]]:
     """List device conditions for NEW_NAME devices."""
     registry = await entity_registry.async_get_registry(hass)
     conditions = []
@@ -63,6 +67,7 @@ async def async_get_conditions(hass: HomeAssistant, device_id: str) -> List[str]
     return conditions
 
 
+@callback
 def async_condition_from_config(
     config: ConfigType, config_validation: bool
 ) -> condition.ConditionCheckerType:
@@ -74,6 +79,7 @@ def async_condition_from_config(
     else:
         state = STATE_OFF
 
+    @callback
     def test_is_state(hass: HomeAssistant, variables: TemplateVarsType) -> bool:
         """Test if an entity is a certain state."""
         return condition.state(hass, config[ATTR_ENTITY_ID], state)

@@ -1,12 +1,13 @@
 """Tests for the Neato config flow."""
+from pybotvac.exceptions import NeatoLoginException, NeatoRobotException
 import pytest
-from unittest.mock import patch
 
 from homeassistant import data_entry_flow
 from homeassistant.components.neato import config_flow
-from homeassistant.components.neato.const import NEATO_DOMAIN, CONF_VENDOR
+from homeassistant.components.neato.const import CONF_VENDOR, NEATO_DOMAIN
 from homeassistant.const import CONF_PASSWORD, CONF_USERNAME
 
+from tests.async_mock import patch
 from tests.common import MockConfigEntry
 
 USERNAME = "myUsername"
@@ -19,7 +20,7 @@ VENDOR_INVALID = "invalid"
 @pytest.fixture(name="account")
 def mock_controller_login():
     """Mock a successful login."""
-    with patch("pybotvac.Account", return_value=True):
+    with patch("homeassistant.components.neato.config_flow.Account", return_value=True):
         yield
 
 
@@ -103,11 +104,12 @@ async def test_abort_if_already_setup(hass, account):
 
 async def test_abort_on_invalid_credentials(hass):
     """Test when we have invalid credentials."""
-    from pybotvac.exceptions import NeatoLoginException
-
     flow = init_config_flow(hass)
 
-    with patch("pybotvac.Account", side_effect=NeatoLoginException()):
+    with patch(
+        "homeassistant.components.neato.config_flow.Account",
+        side_effect=NeatoLoginException(),
+    ):
         result = await flow.async_step_user(
             {
                 CONF_USERNAME: USERNAME,
@@ -116,7 +118,7 @@ async def test_abort_on_invalid_credentials(hass):
             }
         )
         assert result["type"] == data_entry_flow.RESULT_TYPE_FORM
-        assert result["errors"] == {"base": "invalid_credentials"}
+        assert result["errors"] == {"base": "invalid_auth"}
 
         result = await flow.async_step_import(
             {
@@ -126,16 +128,17 @@ async def test_abort_on_invalid_credentials(hass):
             }
         )
         assert result["type"] == data_entry_flow.RESULT_TYPE_ABORT
-        assert result["reason"] == "invalid_credentials"
+        assert result["reason"] == "invalid_auth"
 
 
 async def test_abort_on_unexpected_error(hass):
     """Test when we have an unexpected error."""
-    from pybotvac.exceptions import NeatoRobotException
-
     flow = init_config_flow(hass)
 
-    with patch("pybotvac.Account", side_effect=NeatoRobotException()):
+    with patch(
+        "homeassistant.components.neato.config_flow.Account",
+        side_effect=NeatoRobotException(),
+    ):
         result = await flow.async_step_user(
             {
                 CONF_USERNAME: USERNAME,
@@ -144,7 +147,7 @@ async def test_abort_on_unexpected_error(hass):
             }
         )
         assert result["type"] == data_entry_flow.RESULT_TYPE_FORM
-        assert result["errors"] == {"base": "unexpected_error"}
+        assert result["errors"] == {"base": "unknown"}
 
         result = await flow.async_step_import(
             {
@@ -154,4 +157,4 @@ async def test_abort_on_unexpected_error(hass):
             }
         )
         assert result["type"] == data_entry_flow.RESULT_TYPE_ABORT
-        assert result["reason"] == "unexpected_error"
+        assert result["reason"] == "unknown"

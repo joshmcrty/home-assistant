@@ -2,7 +2,7 @@
 from datetime import timedelta
 from typing import Any, Dict
 
-from homeassistant.const import DEVICE_CLASS_BATTERY
+from homeassistant.const import DEVICE_CLASS_BATTERY, PERCENTAGE
 from homeassistant.helpers.typing import ConfigType, HomeAssistantType
 import homeassistant.util.dt as dt_util
 
@@ -77,7 +77,7 @@ class GeniusBattery(GeniusDevice):
     @property
     def unit_of_measurement(self) -> str:
         """Return the unit of measurement of the sensor."""
-        return "%"
+        return PERCENTAGE
 
     @property
     def state(self) -> str:
@@ -94,6 +94,8 @@ class GeniusIssue(GeniusEntity):
         super().__init__()
 
         self._hub = broker.client
+        self._unique_id = f"{broker.hub_uid}_{GH_LEVEL_MAPPING[level]}"
+
         self._name = f"GeniusHub {GH_LEVEL_MAPPING[level]}"
         self._level = level
         self._issues = []

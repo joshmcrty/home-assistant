@@ -1,13 +1,15 @@
 """Support for Neato botvac connected vacuum cleaners."""
 import asyncio
-import logging
 from datetime import timedelta
+import logging
 
+from pybotvac import Account, Neato, Vorwerk
 from pybotvac.exceptions import NeatoException, NeatoLoginException, NeatoRobotException
 import voluptuous as vol
 
 from homeassistant.config_entries import SOURCE_IMPORT
 from homeassistant.const import CONF_PASSWORD, CONF_USERNAME
+from homeassistant.exceptions import ConfigEntryNotReady
 from homeassistant.helpers import config_validation as cv
 from homeassistant.util import Throttle
 
@@ -17,10 +19,9 @@ from .const import (
     NEATO_CONFIG,
     NEATO_DOMAIN,
     NEATO_LOGIN,
-    NEATO_ROBOTS,
-    NEATO_PERSISTENT_MAPS,
     NEATO_MAP_DATA,
-    SCAN_INTERVAL_MINUTES,
+    NEATO_PERSISTENT_MAPS,
+    NEATO_ROBOTS,
     VALID_VENDORS,
 )
 
@@ -91,14 +92,8 @@ async def async_setup(hass, config):
 
 async def async_setup_entry(hass, entry):
     """Set up config entry."""
-    from pybotvac import Account, Neato, Vorwerk
+    hub = NeatoHub(hass, entry.data, Account)
 
-    if entry.data[CONF_VENDOR] == "neato":
-        hass.data[NEATO_LOGIN] = NeatoHub(hass, entry.data, Account, Neato)
-    elif entry.data[CONF_VENDOR] == "vorwerk":
-        hass.data[NEATO_LOGIN] = NeatoHub(hass, entry.data, Account, Vorwerk)
-
-    hub = hass.data[NEATO_LOGIN]
     await hass.async_add_executor_job(hub.login)
     if not hub.logged_in:
         _LOGGER.debug("Failed to login to Neato API")
@@ -106,9 +101,11 @@ async def async_setup_entry(hass, entry):
 
     try:
         await hass.async_add_executor_job(hub.update_robots)
-    except NeatoRobotException:
+    except NeatoRobotException as ex:
         _LOGGER.debug("Failed to connect to Neato API")
-        return False
+        raise ConfigEntryNotReady from ex
+
+    hass.data[NEATO_LOGIN] = hub
 
     for component in ("camera", "vacuum", "switch", "sensor"):
         hass.async_create_task(
@@ -133,40 +130,43 @@ async def async_unload_entry(hass, entry):
 class NeatoHub:
     """A My Neato hub wrapper class."""
 
-    def __init__(self, hass, domain_config, neato, vendor):
+    def __init__(self, hass, domain_config, neato):
         """Initialize the Neato hub."""
         self.config = domain_config
         self._neato = neato
         self._hass = hass
-        self._vendor = vendor
+
+        if self.config[CONF_VENDOR] == "vorwerk":
+            self._vendor = Vorwerk()
+        else:  # Neato
+            self._vendor = Neato()
 
         self.my_neato = None
         self.logged_in = False
 
     def login(self):
         """Login to My Neato."""
+        _LOGGER.debug("Trying to connect to Neato API")
         try:
-            _LOGGER.debug("Trying to connect to Neato API")
             self.my_neato = self._neato(
                 self.config[CONF_USERNAME], self.config[CONF_PASSWORD], self._vendor
             )
-            self.logged_in = True
-
-            _LOGGER.debug("Successfully connected to Neato API")
-            self._hass.data[NEATO_ROBOTS] = self.my_neato.robots
-            self._hass.data[NEATO_PERSISTENT_MAPS] = self.my_neato.persistent_maps
-            self._hass.data[NEATO_MAP_DATA] = self.my_neato.maps
         except NeatoException as ex:
             if isinstance(ex, NeatoLoginException):
                 _LOGGER.error("Invalid credentials")
             else:
                 _LOGGER.error("Unable to connect to Neato API")
+                raise ConfigEntryNotReady from ex
             self.logged_in = False
+            return
 
-    @Throttle(timedelta(minutes=SCAN_INTERVAL_MINUTES))
+        self.logged_in = True
+        _LOGGER.debug("Successfully connected to Neato API")
+
+    @Throttle(timedelta(minutes=1))
     def update_robots(self):
         """Update the robot states."""
-        _LOGGER.debug("Running HUB.update_robots %s", self._hass.data[NEATO_ROBOTS])
+        _LOGGER.debug("Running HUB.update_robots %s", self._hass.data.get(NEATO_ROBOTS))
         self._hass.data[NEATO_ROBOTS] = self.my_neato.robots
         self._hass.data[NEATO_PERSISTENT_MAPS] = self.my_neato.persistent_maps
         self._hass.data[NEATO_MAP_DATA] = self.my_neato.maps

@@ -1,28 +1,29 @@
 """Support for Nest thermostats."""
 import logging
 
+from nest.nest import APIError
 import voluptuous as vol
 
-from homeassistant.components.climate import PLATFORM_SCHEMA, ClimateDevice
+from homeassistant.components.climate import PLATFORM_SCHEMA, ClimateEntity
 from homeassistant.components.climate.const import (
     ATTR_TARGET_TEMP_HIGH,
     ATTR_TARGET_TEMP_LOW,
+    CURRENT_HVAC_COOL,
+    CURRENT_HVAC_HEAT,
+    CURRENT_HVAC_IDLE,
     FAN_AUTO,
     FAN_ON,
     HVAC_MODE_AUTO,
     HVAC_MODE_COOL,
     HVAC_MODE_HEAT,
     HVAC_MODE_OFF,
-    SUPPORT_PRESET_MODE,
-    SUPPORT_FAN_MODE,
-    SUPPORT_TARGET_TEMPERATURE,
-    SUPPORT_TARGET_TEMPERATURE_RANGE,
     PRESET_AWAY,
     PRESET_ECO,
     PRESET_NONE,
-    CURRENT_HVAC_HEAT,
-    CURRENT_HVAC_IDLE,
-    CURRENT_HVAC_COOL,
+    SUPPORT_FAN_MODE,
+    SUPPORT_PRESET_MODE,
+    SUPPORT_TARGET_TEMPERATURE,
+    SUPPORT_TARGET_TEMPERATURE_RANGE,
 )
 from homeassistant.const import (
     ATTR_TEMPERATURE,
@@ -32,7 +33,8 @@ from homeassistant.const import (
 )
 from homeassistant.helpers.dispatcher import async_dispatcher_connect
 
-from . import DATA_NEST, DOMAIN as NEST_DOMAIN, SIGNAL_NEST_UPDATE
+from . import DATA_NEST, DOMAIN as NEST_DOMAIN
+from .const import SIGNAL_NEST_UPDATE
 
 _LOGGER = logging.getLogger(__name__)
 
@@ -77,7 +79,7 @@ async def async_setup_entry(hass, entry, async_add_entities):
     """Set up the Nest climate device based on a config entry."""
     temp_unit = hass.config.units.temperature_unit
 
-    thermostats = await hass.async_add_job(hass.data[DATA_NEST].thermostats)
+    thermostats = await hass.async_add_executor_job(hass.data[DATA_NEST].thermostats)
 
     all_devices = [
         NestThermostat(structure, device, temp_unit)
@@ -87,7 +89,7 @@ async def async_setup_entry(hass, entry, async_add_entities):
     async_add_entities(all_devices, True)
 
 
-class NestThermostat(ClimateDevice):
+class NestThermostat(ClimateEntity):
     """Representation of a Nest thermostat."""
 
     def __init__(self, structure, device, temp_unit):
@@ -150,7 +152,9 @@ class NestThermostat(ClimateDevice):
             """Update device state."""
             await self.async_update_ha_state(True)
 
-        async_dispatcher_connect(self.hass, SIGNAL_NEST_UPDATE, async_update_state)
+        self.async_on_remove(
+            async_dispatcher_connect(self.hass, SIGNAL_NEST_UPDATE, async_update_state)
+        )
 
     @property
     def supported_features(self):
@@ -232,7 +236,6 @@ class NestThermostat(ClimateDevice):
 
     def set_temperature(self, **kwargs):
         """Set new target temperature."""
-        import nest
 
         temp = None
         target_temp_low = kwargs.get(ATTR_TARGET_TEMP_LOW)
@@ -247,7 +250,7 @@ class NestThermostat(ClimateDevice):
         try:
             if temp is not None:
                 self.device.target = temp
-        except nest.nest.APIError as api_error:
+        except APIError as api_error:
             _LOGGER.error("An error occurred while setting temperature: %s", api_error)
             # restore target temperature
             self.schedule_update_ha_state(True)

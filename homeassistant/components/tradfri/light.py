@@ -1,77 +1,72 @@
 """Support for IKEA Tradfri lights."""
-import logging
-
-from pytradfri.error import PytradfriError
-
-import homeassistant.util.color as color_util
 from homeassistant.components.light import (
     ATTR_BRIGHTNESS,
     ATTR_COLOR_TEMP,
     ATTR_HS_COLOR,
     ATTR_TRANSITION,
-    PLATFORM_SCHEMA as LIGHT_PLATFORM_SCHEMA,
     SUPPORT_BRIGHTNESS,
     SUPPORT_COLOR,
     SUPPORT_COLOR_TEMP,
-    SUPPORT_TRANSITION,
-    Light,
+    LightEntity,
 )
-from homeassistant.components.tradfri.base_class import TradfriBaseDevice
-from homeassistant.core import callback
-from . import KEY_API, KEY_GATEWAY
-from .const import CONF_GATEWAY_ID, CONF_IMPORT_GROUPS
+import homeassistant.util.color as color_util
 
-_LOGGER = logging.getLogger(__name__)
-
-ATTR_DIMMER = "dimmer"
-ATTR_HUE = "hue"
-ATTR_SAT = "saturation"
-ATTR_TRANSITION_TIME = "transition_time"
-PLATFORM_SCHEMA = LIGHT_PLATFORM_SCHEMA
-TRADFRI_LIGHT_MANAGER = "Tradfri Light Manager"
-SUPPORTED_FEATURES = SUPPORT_TRANSITION
-SUPPORTED_GROUP_FEATURES = SUPPORT_BRIGHTNESS | SUPPORT_TRANSITION
+from .base_class import TradfriBaseClass, TradfriBaseDevice
+from .const import (
+    ATTR_DIMMER,
+    ATTR_HUE,
+    ATTR_SAT,
+    ATTR_TRANSITION_TIME,
+    CONF_GATEWAY_ID,
+    CONF_IMPORT_GROUPS,
+    DEVICES,
+    DOMAIN,
+    GROUPS,
+    KEY_API,
+    SUPPORTED_GROUP_FEATURES,
+    SUPPORTED_LIGHT_FEATURES,
+)
 
 
 async def async_setup_entry(hass, config_entry, async_add_entities):
     """Load Tradfri lights based on a config entry."""
     gateway_id = config_entry.data[CONF_GATEWAY_ID]
-    api = hass.data[KEY_API][config_entry.entry_id]
-    gateway = hass.data[KEY_GATEWAY][config_entry.entry_id]
+    tradfri_data = hass.data[DOMAIN][config_entry.entry_id]
+    api = tradfri_data[KEY_API]
+    devices = tradfri_data[DEVICES]
 
-    devices_commands = await api(gateway.get_devices())
-    devices = await api(devices_commands)
     lights = [dev for dev in devices if dev.has_light_control]
     if lights:
         async_add_entities(TradfriLight(light, api, gateway_id) for light in lights)
 
     if config_entry.data[CONF_IMPORT_GROUPS]:
-        groups_commands = await api(gateway.get_groups())
-        groups = await api(groups_commands)
+        groups = tradfri_data[GROUPS]
         if groups:
             async_add_entities(TradfriGroup(group, api, gateway_id) for group in groups)
 
 
-class TradfriGroup(Light):
-    """The platform class required by hass."""
+class TradfriGroup(TradfriBaseClass, LightEntity):
+    """The platform class for light groups required by hass."""
 
-    def __init__(self, group, api, gateway_id):
+    def __init__(self, device, api, gateway_id):
         """Initialize a Group."""
-        self._api = api
-        self._unique_id = f"group-{gateway_id}-{group.id}"
-        self._group = group
-        self._name = group.name
+        super().__init__(device, api, gateway_id)
 
-        self._refresh(group)
+        self._unique_id = f"group-{gateway_id}-{device.id}"
 
-    async def async_added_to_hass(self):
-        """Start thread when added to hass."""
-        self._async_start_observe()
+        self._refresh(device)
 
     @property
-    def unique_id(self):
-        """Return unique ID for this group."""
-        return self._unique_id
+    def should_poll(self):
+        """Poll needed for tradfri groups."""
+        return True
+
+    async def async_update(self):
+        """Fetch new state data for the group.
+
+        This method is required for groups to update properly.
+        """
+        await self._api(self._device.update())
 
     @property
     def supported_features(self):
@@ -79,23 +74,18 @@ class TradfriGroup(Light):
         return SUPPORTED_GROUP_FEATURES
 
     @property
-    def name(self):
-        """Return the display name of this group."""
-        return self._name
-
-    @property
     def is_on(self):
         """Return true if group lights are on."""
-        return self._group.state
+        return self._device.state
 
     @property
     def brightness(self):
         """Return the brightness of the group lights."""
-        return self._group.dimmer
+        return self._device.dimmer
 
     async def async_turn_off(self, **kwargs):
         """Instruct the group lights to turn off."""
-        await self._api(self._group.set_state(0))
+        await self._api(self._device.set_state(0))
 
     async def async_turn_on(self, **kwargs):
         """Instruct the group lights to turn on, or dim."""
@@ -107,44 +97,12 @@ class TradfriGroup(Light):
             if kwargs[ATTR_BRIGHTNESS] == 255:
                 kwargs[ATTR_BRIGHTNESS] = 254
 
-            await self._api(self._group.set_dimmer(kwargs[ATTR_BRIGHTNESS], **keys))
+            await self._api(self._device.set_dimmer(kwargs[ATTR_BRIGHTNESS], **keys))
         else:
-            await self._api(self._group.set_state(1))
-
-    @callback
-    def _async_start_observe(self, exc=None):
-        """Start observation of light."""
-        if exc:
-            _LOGGER.warning("Observation failed for %s", self._name, exc_info=exc)
-
-        try:
-            cmd = self._group.observe(
-                callback=self._observe_update,
-                err_callback=self._async_start_observe,
-                duration=0,
-            )
-            self.hass.async_create_task(self._api(cmd))
-        except PytradfriError as err:
-            _LOGGER.warning("Observation failed, trying again", exc_info=err)
-            self._async_start_observe()
-
-    def _refresh(self, group):
-        """Refresh the light data."""
-        self._group = group
-        self._name = group.name
-
-    @callback
-    def _observe_update(self, tradfri_device):
-        """Receive new state data for this light."""
-        self._refresh(tradfri_device)
-        self.async_schedule_update_ha_state()
-
-    async def async_update(self):
-        """Fetch new state data for the group."""
-        await self._api(self._group.update())
+            await self._api(self._device.set_state(1))
 
 
-class TradfriLight(TradfriBaseDevice, Light):
+class TradfriLight(TradfriBaseDevice, LightEntity):
     """The platform class required by Home Assistant."""
 
     def __init__(self, device, api, gateway_id):
@@ -152,7 +110,16 @@ class TradfriLight(TradfriBaseDevice, Light):
         super().__init__(device, api, gateway_id)
         self._unique_id = f"light-{gateway_id}-{device.id}"
         self._hs_color = None
-        self._features = SUPPORTED_FEATURES
+
+        # Calculate supported features
+        _features = SUPPORTED_LIGHT_FEATURES
+        if device.light_control.can_set_dimmer:
+            _features |= SUPPORT_BRIGHTNESS
+        if device.light_control.can_set_color:
+            _features |= SUPPORT_COLOR
+        if device.light_control.can_set_temp:
+            _features |= SUPPORT_COLOR_TEMP
+        self._features = _features
 
         self._refresh(device)
 
@@ -275,7 +242,7 @@ class TradfriLight(TradfriBaseDevice, Light):
                 color_command = self._device_control.set_hsb(**color_data)
                 transition_time = None
 
-        # HSB can always be set, but color temp + brightness is bulb dependant
+        # HSB can always be set, but color temp + brightness is bulb dependent
         command = dimmer_command
         if command is not None:
             command += color_command
@@ -297,11 +264,3 @@ class TradfriLight(TradfriBaseDevice, Light):
         # Caching of LightControl and light object
         self._device_control = device.light_control
         self._device_data = device.light_control.lights[0]
-        self._features = SUPPORTED_FEATURES
-
-        if device.light_control.can_set_dimmer:
-            self._features |= SUPPORT_BRIGHTNESS
-        if device.light_control.can_set_color:
-            self._features |= SUPPORT_COLOR
-        if device.light_control.can_set_temp:
-            self._features |= SUPPORT_COLOR_TEMP
